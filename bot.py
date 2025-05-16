@@ -16,11 +16,13 @@ COOLDOWN_SECONDS = 86400  # 24 hours
 TRADE_PERCENTAGE = 0.98
 PROFIT_TARGET = 0.03
 STOP_LOSS_PERCENTAGE = 0.03
+BUY_TOLERANCE_PERCENTAGE = 0.01  # 1% below market
 
 # === INIT ===
 session = HTTP(testnet=True, api_key=API_KEY, api_secret=API_SECRET)
 bot = Bot(token=TELEGRAM_TOKEN)
 in_cooldown = False
+cooldown_start = None
 
 async def send_telegram(msg):
     await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=msg)
@@ -33,59 +35,52 @@ def get_price():
     data = session.get_tickers(category="spot", symbol=SYMBOL)
     return float(data["result"]["list"][0]["lastPrice"])
 
-def place_order(side, qty):
-    return session.place_order(
+def place_conditional_buy(qty, trigger_price):
+    response = session.place_order(
         category="spot",
         symbol=SYMBOL,
-        side=side,
+        side="Buy",
+        orderType="Market",
+        qty=str(qty),
+        triggerPrice=str(trigger_price),
+        triggerDirection=1,  # Trigger when price drops below
+        timeInForce="GoodTillCancel"
+    )
+    return response["result"]["orderId"]
+
+def check_order_filled(order_id):
+    order_info = session.get_order(category="spot", symbol=SYMBOL, orderId=order_id)
+    return order_info["result"]["orderStatus"] == "Filled"
+
+def place_take_profit_and_stop_loss(qty, buy_price):
+    take_profit_price = round(buy_price * (1 + PROFIT_TARGET), 4)
+    stop_loss_price = round(buy_price * (1 - STOP_LOSS_PERCENTAGE), 4)
+
+    # Take Profit
+    session.place_order(
+        category="spot",
+        symbol=SYMBOL,
+        side="Sell",
         orderType="Limit",
         qty=str(qty),
-        price=get_price()
+        price=str(take_profit_price)
     )
 
-def get_position():
-    orders = session.get_open_orders(category="spot", symbol=SYMBOL)
-    return any(order["side"] == "Buy" for order in orders["result"]["list"])
+    # Stop Loss
+    session.place_order(
+        category="spot",
+        symbol=SYMBOL,
+        side="Sell",
+        orderType="Market",
+        qty=str(qty),
+        stopLoss=str(stop_loss_price)
+    )
 
-def has_xrp():
-    balance = session.get_wallet_balance(accountType="UNIFIED", coin="XRP")["result"]["list"][0]["coin"][0]["walletBalance"]
-    return float(balance) > 0
-
-def get_last_buy_price():
-    try:
-        orders = session.get_order_history(category="spot", symbol=SYMBOL)
-        for order in sorted(orders["result"]["list"], key=lambda x: x["createdTime"], reverse=False):
-            if order["side"] == "Buy" and order["orderStatus"] in ["Filled", "PartiallyFilled"]:
-                return float(order["avgPrice"])
-    except Exception as e:
-        print(f"Error fetching last buy price: {e}")
-    return None
-
-# === INITIAL BUY PRICE CHECK ===
-xrp_balance_raw = session.get_wallet_balance(accountType="UNIFIED", coin="XRP")["result"]["list"][0]["coin"][0]["walletBalance"]
-try:
-    xrp_balance = float(xrp_balance_raw)
-except (ValueError, TypeError):
-    xrp_balance = 0.0
-    print(f"Warning: Could not convert XRP balance '{xrp_balance_raw}' to float.")
-
-if xrp_balance > 20:
-
-    buy_price = get_last_buy_price()
-    if buy_price:
-        print(f"Detected XRP balance > 20. Setting buy_price to last filled buy price: {buy_price}")
-    else:
-        buy_price = None
-        print("XRP balance > 20 but no filled buy order found. Setting buy_price to None.")
-else:
-    buy_price = None
-    print("XRP balance <= 20. Setting buy_price to None.")
-
-cooldown_start = None
+    return take_profit_price, stop_loss_price
 
 # === TRADING LOOP ===
 async def trading_loop():
-    global buy_price, cooldown_start, in_cooldown
+    global in_cooldown, cooldown_start
 
     while True:
         try:
@@ -104,37 +99,36 @@ async def trading_loop():
             change_24h = float(session.get_tickers(category="spot", symbol=SYMBOL)["result"]["list"][0]["price24hPcnt"])
             print(f"{now} | 24h Change: {change_24h:.2f}% | Price: {current_price}")
 
-            if buy_price:
-                price_change = (current_price - buy_price) / buy_price
-                if price_change >= PROFIT_TARGET:
-                    xrp_balance = float(session.get_wallet_balance(accountType="UNIFIED", coin="XRP")["result"]["list"][0]["coin"][0]["walletBalance"])
-                    if xrp_balance > 0:
-                        place_order("Sell", round(xrp_balance,2))
-                        await send_telegram(f"📈 Sold XRP at {current_price:.4f} (Profit Reached)")
-                        buy_price = None
+            usdt = get_wallet_balance()
+            if change_24h <= -5 and usdt >= 10:
+                trade_usdt = usdt * TRADE_PERCENTAGE
+                trigger_price = current_price * (1 - BUY_TOLERANCE_PERCENTAGE)
+                qty = round(trade_usdt / trigger_price, 2)
 
-                elif price_change <= -STOP_LOSS_PERCENTAGE:
-                    xrp_balance = float(session.get_wallet_balance(accountType="UNIFIED", coin="XRP")["result"]["list"][0]["coin"][0]["walletBalance"])
-                    if xrp_balance > 0:
-                        place_order("Sell", round(xrp_balance,2))
-                        await send_telegram(f"🔻 Stop-loss hit. Sold XRP at {current_price:.4f}")
-                        buy_price = None
-                        cooldown_start = time.time()
-                        in_cooldown = True
+                order_id = place_conditional_buy(qty, round(trigger_price, 4))
+                await send_telegram(f"🛒 Placed Conditional Market Buy Order for XRP\nTrigger: {trigger_price:.4f}")
 
-            else:
-                usdt = get_wallet_balance()
-                if change_24h <= -5 and not get_position() and usdt >= 10:
-                    trade_usdt = usdt * TRADE_PERCENTAGE
-                    buy_price = current_price
-                    qty = trade_usdt / current_price
-                    print(place_order("Buy", round(qty, 2)))
-                    await send_telegram(f"🛒 Placed Buy Order for XRP at {current_price:.4f}")
-                elif usdt < 10:
-                    print(f"{now} | Skipping buy: USDT balance too low (${usdt:.2f})")
+                # Wait for the order to fill
+                print("⏳ Waiting for buy order to fill...")
+                for _ in range(60):  # Check for up to 10 minutes
+                    if check_order_filled(order_id):
+                        take_profit, stop_loss = place_take_profit_and_stop_loss(qty, trigger_price)
+                        await send_telegram(
+                            f"✅ Buy filled at {trigger_price:.4f}\n"
+                            f"📈 Take Profit set at {take_profit:.4f}\n"
+                            f"🔻 Stop Loss set at {stop_loss:.4f}"
+                        )
+                        break
+                    await asyncio.sleep(10)
+                else:
+                    await send_telegram("⚠️ Buy order not filled within 10 minutes.")
+
+            elif usdt < 10:
+                print(f"{now} | Skipping buy: USDT balance too low (${usdt:.2f})")
 
         except Exception as e:
             print(f"Error: {e}")
+            await send_telegram(f"⚠️ Error in trading loop: {e}")
 
         await asyncio.sleep(600)  # Wait 10 minutes before next iteration
 

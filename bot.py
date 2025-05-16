@@ -93,10 +93,8 @@ while True:
 
         else:
             if change_24h <= -1:
-               
-              
-
-            time.sleep(30)
+                print("hello)
+                time.sleep(30)
 
     except Exception as e:
         print(e)

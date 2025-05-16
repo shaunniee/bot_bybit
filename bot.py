@@ -96,12 +96,7 @@ while True:
     accountType="SPOT",
     coin="USDT",
 ))
-             usdt = 50
-                trade_usdt = usdt * TRADE_PERCENTAGE
-                buy_price = current_price
-                qty = trade_usdt / current_price
-                place_order("Buy", round(qty, 2))
-                
+              
 
         time.sleep(30)
 

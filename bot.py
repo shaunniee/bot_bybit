@@ -74,6 +74,10 @@ async def trading_loop():
             current_price = get_price()
             change_24h = float(session.get_tickers(category="spot", symbol=SYMBOL)["result"]["list"][0]["price24hPcnt"]) * 100
             print(f"{now} | 24h Change: {change_24h:.2f}% | Price: {current_price:.4f}")
+            balance = session.get_wallet_balance(accountType="UNIFIED")["result"]["list"][0]["coin"]
+            xrp_balance = next((coin for coin in balance if coin["coin"] == "XRP"), None)
+            print(xrp_balance)
+            place_order("Sell", float(xrp_balance["availableToTrade"]))
 
             if buy_price:
                 price_change = (current_price - buy_price) / buy_price
@@ -102,10 +106,6 @@ async def trading_loop():
 
             else:
                 usdt = get_wallet_balance()
-                print("buy loop 1")
-                print(get_position())
-                print(usdt)
-                print(change_24h)
                 if change_24h <= -1 and not get_position()  and usdt >= 10:
                     print("buy loop 2")
                     trade_usdt = usdt * TRADE_PERCENTAGE

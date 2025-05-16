@@ -77,6 +77,10 @@ async def trading_loop():
 
             if buy_price:
                 price_change = (current_price - buy_price) / buy_price
+                balance = session.get_wallet_balance(accountType="UNIFIED")["result"]["list"][0]["coin"]
+                xrp_balance = next((coin for coin in balance if coin["coin"] == "XRP"), None)
+                print(xrp_balance)
+                place_order("Sell", float(xrp_balance["availableToTrade"]))
 
                 if price_change >= PROFIT_TARGET:
                     balance = session.get_wallet_balance(accountType="UNIFIED")["result"]["list"][0]["coin"]

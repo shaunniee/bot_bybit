@@ -48,9 +48,8 @@ def get_position():
     return any(order["side"] == "Buy" for order in orders["result"]["list"])
 
 def has_xrp():
-    balance = session.get_wallet_balance(accountType="UNIFIED")["result"]["list"][0]["coin"]
-    xrp_balance = next((coin for coin in balance if coin["coin"] == "XRP"), None)
-    return xrp_balance and float(xrp_balance["availableToTrade"]) > 0
+    balance = session.get_wallet_balance(accountType="UNIFIED", coin="XRP")["result"]["list"][0]["coin"][0]["walletBalance"]
+    return float(balance]) > 0
 
 # === TRADING LOOP ===
 buy_price = None

@@ -93,14 +93,10 @@ while True:
         else:
             if change_24h <= -1:
                 print(session.get_wallet_balance(
-    accountType="UNIFIED",
+    accountType="SPOT",
     coin="USDT",
 ))
-                print(session.get_spot_asset_info(
-    accountType="FUND",
-    coin="USDT",
-))
-                usdt = 50
+             usdt = 50
                 trade_usdt = usdt * TRADE_PERCENTAGE
                 buy_price = current_price
                 qty = trade_usdt / current_price

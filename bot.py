@@ -26,9 +26,8 @@ async def send_telegram(msg):
     await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=msg)
 
 def get_wallet_balance():
-    balances = session.get_wallet_balance(accountType="UNIFIED")["result"]["list"][0]["coin"]
-    usdt = next(item for item in balances if item["coin"] == "USDT")
-    return float(usdt["availableToTrade"])
+    balances = session.get_wallet_balance(accountType="UNIFIED",coin="USDT")["result"]["list"][0]["coin"][0]["walletBalance"]
+    return float(balances)
 
 def get_price():
     data = session.get_tickers(category="spot", symbol=SYMBOL)
@@ -39,9 +38,9 @@ def place_order(side, qty):
         category="spot",
         symbol=SYMBOL,
         side=side,
-        orderType="Market",
+        orderType="Limit",
         qty=str(qty),
-        price="2.60"
+        price=get_price()
     )
 
 def get_position():
@@ -67,8 +66,7 @@ while True:
         current_price = get_price()
         change_24h = float(session.get_tickers(category="spot", symbol=SYMBOL)["result"]["list"][0]["price24hPcnt"]) * 100
         print(f"{now} | 24h Change: {change_24h:.2f}% | Price: {current_price:.4f}")
-        print(session.get_wallet_balance(accountType="UNIFIED",coin="USDT")["result"]["list"][0]["coin"][0]["walletBalance"])
-        print(place_order("Buy", 5))
+       
 
         if buy_price:
             # Monitor sell condition
@@ -94,6 +92,11 @@ while True:
 
         else:
             if change_24h <= -1:
+                usdt = get_wallet_balance()
+                trade_usdt = usdt * TRADE_PERCENTAGE
+                buy_price = current_price
+                qty = trade_usdt / current_price
+                print(place_order("Buy",round(qty, 2))
                 time.sleep(30)
 
     except Exception as e:

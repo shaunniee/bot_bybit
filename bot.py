@@ -90,7 +90,7 @@ while True:
                     in_cooldown = True
 
         else:
-            if change_24h <= -5:
+            if change_24h <= -1:
                 usdt = get_wallet_balance()
                 trade_usdt = usdt * TRADE_PERCENTAGE
                 buy_price = current_price

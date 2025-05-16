@@ -36,7 +36,7 @@ def get_price():
 
 def place_order(side, qty):
     return session.place_order(
-        category="spot",
+        category="UNIFIED",
         symbol=SYMBOL,
         side=side,
         orderType="Market",

@@ -72,8 +72,8 @@ async def trading_loop():
                     continue
 
             current_price = get_price()
-            change_24h = float(session.get_tickers(category="spot", symbol=SYMBOL)["result"]["list"][0]["price24hPcnt"]) * 100
-            print(f"{now} | 24h Change: {change_24h:.2f}% | Price: {current_price:.4f}")
+            change_24h = float(session.get_tickers(category="spot", symbol=SYMBOL)["result"]["list"][0]["price24hPcnt"])
+            print(f"{now} | 24h Change: {change_24h:.2f}% | Price: {current_price}")
             
 
             if buy_price:

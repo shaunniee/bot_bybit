@@ -49,7 +49,7 @@ def get_position():
 
 def has_xrp():
     balance = session.get_wallet_balance(accountType="UNIFIED", coin="XRP")["result"]["list"][0]["coin"][0]["walletBalance"]
-    return float(balance]) > 0
+    return float(balance) > 0
 
 # === TRADING LOOP ===
 buy_price = None

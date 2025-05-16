@@ -22,8 +22,8 @@ session = HTTP(testnet=True, api_key=API_KEY, api_secret=API_SECRET)
 bot = Bot(token=TELEGRAM_TOKEN)
 in_cooldown = False
 
-def send_telegram(msg):
-    bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=msg)
+async def send_telegram(msg):
+    await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=msg)
 
 def get_wallet_balance():
     balances = session.get_wallet_balance(accountType="UNIFIED")["result"]["list"][0]["coin"]

@@ -55,7 +55,7 @@ def get_last_buy_price():
     try:
         orders = session.get_order_history(category="spot", symbol=SYMBOL)
         for order in sorted(orders["result"]["list"], key=lambda x: x["createdTime"], reverse=True):
-            if order["side"] == "Buy" and (order["orderStatus"] == "Filled" or order["orderStatus"] == "Partially Filled"):
+            if order["side"] == "Buy" and order["orderStatus"] in ["Filled", "PartiallyFilled"]:
                 return float(order["avgPrice"])
     except Exception as e:
         print(f"Error fetching last buy price: {e}")
@@ -107,14 +107,14 @@ async def trading_loop():
             if buy_price:
                 price_change = (current_price - buy_price) / buy_price
                 if price_change >= PROFIT_TARGET:
-                    xrp_balance = session.get_wallet_balance(accountType="UNIFIED", coin="XRP")["result"]["list"][0]["coin"][0]["walletBalance"]
+                    xrp_balance = float(session.get_wallet_balance(accountType="UNIFIED", coin="XRP")["result"]["list"][0]["coin"][0]["walletBalance"])
                     if xrp_balance > 0:
                         place_order("Sell", float(xrp_balance))
                         await send_telegram(f"📈 Sold XRP at {current_price:.4f} (Profit Reached)")
                         buy_price = None
 
                 elif price_change <= -STOP_LOSS_PERCENTAGE:
-                    xrp_balance = session.get_wallet_balance(accountType="UNIFIED", coin="XRP")["result"]["list"][0]["coin"][0]["walletBalance"]
+                    xrp_balance = float(session.get_wallet_balance(accountType="UNIFIED", coin="XRP")["result"]["list"][0]["coin"][0]["walletBalance"])
                     if xrp_balance > 0:
                         place_order("Sell", float(xrp_balance))
                         await send_telegram(f"🔻 Stop-loss hit. Sold XRP at {current_price:.4f}")

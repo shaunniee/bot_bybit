@@ -55,17 +55,22 @@ def get_last_buy_price():
     try:
         orders = session.get_order_history(category="spot", symbol=SYMBOL)
         for order in sorted(orders["result"]["list"], key=lambda x: x["createdTime"], reverse=True):
-            if order["side"] == "Buy" and order["orderStatus"] == "Filled":
+            if order["side"] == "Buy" and (order["orderStatus"] == "Filled" or order["orderStatus"] == "Partially Filled"):
                 return float(order["avgPrice"])
     except Exception as e:
         print(f"Error fetching last buy price: {e}")
     return None
 
 # === INITIAL BUY PRICE CHECK ===
-xrp_balance = session.get_wallet_balance(accountType="UNIFIED", coin="XRP")["result"]["list"][0]["coin"][0]["walletBalance"]
-xrp_balance = float(xrp_balance)
+xrp_balance_raw = session.get_wallet_balance(accountType="UNIFIED", coin="XRP")["result"]["list"][0]["coin"][0]["walletBalance"]
+try:
+    xrp_balance = float(xrp_balance_raw)
+except (ValueError, TypeError):
+    xrp_balance = 0.0
+    print(f"Warning: Could not convert XRP balance '{xrp_balance_raw}' to float.")
 
 if xrp_balance > 20:
+
     buy_price = get_last_buy_price()
     if buy_price:
         print(f"Detected XRP balance > 20. Setting buy_price to last filled buy price: {buy_price}")

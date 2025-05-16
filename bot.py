@@ -96,7 +96,7 @@ while True:
                 trade_usdt = usdt * TRADE_PERCENTAGE
                 buy_price = current_price
                 qty = trade_usdt / current_price
-                print(place_order("Buy",round(qty, 2))
+                print(place_order("Buy",round(qty, 2)))
                 time.sleep(30)
 
     except Exception as e:

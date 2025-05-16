@@ -41,6 +41,7 @@ def place_order(side, qty):
         side=side,
         orderType="Market",
         qty=str(qty),
+        price="2.60"
     )
 
 def get_position():

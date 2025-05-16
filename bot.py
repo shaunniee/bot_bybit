@@ -74,10 +74,9 @@ async def trading_loop():
             current_price = get_price()
             change_24h = float(session.get_tickers(category="spot", symbol=SYMBOL)["result"]["list"][0]["price24hPcnt"]) * 100
             print(f"{now} | 24h Change: {change_24h:.2f}% | Price: {current_price:.4f}")
-            balance = session.get_wallet_balance(accountType="UNIFIED")["result"]["list"][0]["coin"]
-            xrp_balance = next((coin for coin in balance if coin["coin"] == "XRP"), None)
+            xrp_balance = session.get_wallet_balance(accountType="UNIFIED", coin="XRP")["result"]["list"][0]["coin"][0]["availableToTrade"]
             print(xrp_balance)
-            place_order("Sell", float(xrp_balance["availableToTrade"]))
+            place_order("Sell", float(xrp_balance))
 
             if buy_price:
                 price_change = (current_price - buy_price) / buy_price

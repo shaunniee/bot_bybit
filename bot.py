@@ -40,7 +40,7 @@ def place_order(side, qty):
         side=side,
         orderType="Limit",
         qty=str(qty),
-        price=get_price()
+        price=get_price()+0.001
     )
 
 def get_position():

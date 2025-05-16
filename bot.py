@@ -91,6 +91,10 @@ while True:
 
         else:
             if change_24h <= -1:
+                print(session.get_wallet_balance(
+    accountType="UNIFIED",
+    coin="BTC",
+))
                 usdt = get_wallet_balance()
                 trade_usdt = usdt * TRADE_PERCENTAGE
                 buy_price = current_price

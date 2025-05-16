@@ -99,7 +99,7 @@ while True:
     accountType="FUND",
     coin="USDT",
 ))
-                usdt = get_wallet_balance()
+                usdt = 50
                 trade_usdt = usdt * TRADE_PERCENTAGE
                 buy_price = current_price
                 qty = trade_usdt / current_price

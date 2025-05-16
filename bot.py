@@ -39,10 +39,9 @@ def place_order(side, qty):
         category="spot",
         symbol=SYMBOL,
         side=side,
-        orderType="Market",
+        orderType="Limit",
         qty=str(qty),
-        price="2.60",
-        orderType="Limit"
+        price="2.60"
     )
 
 def get_position():

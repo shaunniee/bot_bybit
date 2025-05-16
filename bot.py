@@ -93,10 +93,7 @@ while True:
 
         else:
             if change_24h <= -1:
-                print(session.get_wallet_balance(
-    accountType="SPOT",
-    coin="USDT",
-))
+               
               
 
         time.sleep(30)

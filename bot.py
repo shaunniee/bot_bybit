@@ -1,9 +1,9 @@
 import time
-import requests
 import os
 from pybit.unified_trading import HTTP
 from telegram import Bot
 from datetime import datetime
+import asyncio
 
 # === CONFIGURATION ===
 API_KEY = os.getenv("API_KEY")
@@ -12,7 +12,7 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 SYMBOL = "XRPUSDT"
-COOLDOWN_SECONDS = 86400  # 24h
+COOLDOWN_SECONDS = 86400  # 24 hours
 TRADE_PERCENTAGE = 0.98
 PROFIT_TARGET = 0.03
 STOP_LOSS_PERCENTAGE = 0.03
@@ -26,7 +26,7 @@ async def send_telegram(msg):
     await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=msg)
 
 def get_wallet_balance():
-    balances = session.get_wallet_balance(accountType="UNIFIED",coin="USDT")["result"]["list"][0]["coin"][0]["walletBalance"]
+    balances = session.get_wallet_balance(accountType="UNIFIED", coin="USDT")["result"]["list"][0]["coin"][0]["walletBalance"]
     return float(balances)
 
 def get_price():
@@ -40,65 +40,77 @@ def place_order(side, qty):
         side=side,
         orderType="Limit",
         qty=str(qty),
-        price=get_price()+0.001
+        price=get_price()
     )
 
 def get_position():
     orders = session.get_open_orders(category="spot", symbol=SYMBOL)
     return any(order["side"] == "Buy" for order in orders["result"]["list"])
 
+def has_xrp():
+    balance = session.get_wallet_balance(accountType="UNIFIED")["result"]["list"][0]["coin"]
+    xrp_balance = next((coin for coin in balance if coin["coin"] == "XRP"), None)
+    return xrp_balance and float(xrp_balance["availableToTrade"]) > 0
+
 # === TRADING LOOP ===
 buy_price = None
 cooldown_start = None
 
-while True:
-    try:
-        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+async def trading_loop():
+    global buy_price, cooldown_start, in_cooldown
 
-        if in_cooldown:
-            if time.time() - cooldown_start >= COOLDOWN_SECONDS:
-                in_cooldown = False
-                send_telegram("Cooldown period ended. Bot is resuming trades.")
+    while True:
+        try:
+            now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+            if in_cooldown:
+                if time.time() - cooldown_start >= COOLDOWN_SECONDS:
+                    in_cooldown = False
+                    await send_telegram("Cooldown period ended. Bot is resuming trades.")
+                else:
+                    await asyncio.sleep(30)
+                    continue
+
+            current_price = get_price()
+            change_24h = float(session.get_tickers(category="spot", symbol=SYMBOL)["result"]["list"][0]["price24hPcnt"]) * 100
+            print(f"{now} | 24h Change: {change_24h:.2f}% | Price: {current_price:.4f}")
+
+            if buy_price:
+                price_change = (current_price - buy_price) / buy_price
+
+                if price_change >= PROFIT_TARGET:
+                    balance = session.get_wallet_balance(accountType="UNIFIED")["result"]["list"][0]["coin"]
+                    xrp_balance = next((coin for coin in balance if coin["coin"] == "XRP"), None)
+                    if xrp_balance and float(xrp_balance["availableToTrade"]) > 0:
+                        place_order("Sell", float(xrp_balance["availableToTrade"]))
+                        await send_telegram(f"📈 Sold XRP at {current_price:.4f} (Profit Reached)")
+                        buy_price = None
+
+                elif price_change <= -STOP_LOSS_PERCENTAGE:
+                    balance = session.get_wallet_balance(accountType="UNIFIED")["result"]["list"][0]["coin"]
+                    xrp_balance = next((coin for coin in balance if coin["coin"] == "XRP"), None)
+                    if xrp_balance and float(xrp_balance["availableToTrade"]) > 0:
+                        place_order("Sell", float(xrp_balance["availableToTrade"]))
+                        await send_telegram(f"🔻 Stop-loss hit. Sold XRP at {current_price:.4f}")
+                        buy_price = None
+                        cooldown_start = time.time()
+                        in_cooldown = True
+
             else:
-                time.sleep(30)
-                continue
-
-        current_price = get_price()
-        change_24h = float(session.get_tickers(category="spot", symbol=SYMBOL)["result"]["list"][0]["price24hPcnt"]) * 100
-        print(f"{now} | 24h Change: {change_24h:.2f}% | Price: {current_price:.4f}")
-       
-
-        if buy_price:
-            # Monitor sell condition
-            price_change = (current_price - buy_price) / buy_price
-
-            if price_change >= PROFIT_TARGET:
-                balance = session.get_wallet_balance(accountType="UNIFIED")["result"]["list"][0]["coin"]
-                xrp_balance = next((coin for coin in balance if coin["coin"] == "XRP"), None)
-                if xrp_balance and float(xrp_balance["availableToTrade"]) > 0:
-                    place_order("Sell", float(xrp_balance["availableToTrade"]))
-                    send_telegram(f"📈 Sold XRP at {current_price:.4f} (Profit Reached)")
-                    buy_price = None
-
-            elif price_change <= -STOP_LOSS_PERCENTAGE:
-                balance = session.get_wallet_balance(accountType="UNIFIED")["result"]["list"][0]["coin"]
-                xrp_balance = next((coin for coin in balance if coin["coin"] == "XRP"), None)
-                if xrp_balance and float(xrp_balance["availableToTrade"]) > 0:
-                    place_order("Sell", float(xrp_balance["availableToTrade"]))
-                    send_telegram(f"🔻 Stop-loss hit. Sold XRP at {current_price:.4f}")
-                    buy_price = None
-                    cooldown_start = time.time()
-                    in_cooldown = True
-
-        else:
-            if change_24h <= -1:
                 usdt = get_wallet_balance()
-                trade_usdt = usdt * TRADE_PERCENTAGE
-                buy_price = current_price
-                qty = trade_usdt / current_price
-                print(place_order("Buy",round(qty, 2)))
-                time.sleep(30)
+                if change_24h <= -1 and not get_position() and not has_xrp() and usdt >= 10:
+                    trade_usdt = usdt * TRADE_PERCENTAGE
+                    buy_price = current_price
+                    qty = trade_usdt / current_price
+                    print(place_order("Buy", round(qty, 2)))
+                    await send_telegram(f"🛒 Placed Buy Order for XRP at {current_price:.4f}")
+                    await asyncio.sleep(30)
+                elif usdt < 10:
+                    print(f"{now} | Skipping buy: USDT balance too low (${usdt:.2f})")
 
-    except Exception as e:
-        print(e)
-        time.sleep(60)
+        except Exception as e:
+            print(f"Error: {e}")
+            await asyncio.sleep(60)
+
+# Run the trading loop
+asyncio.run(trading_loop())

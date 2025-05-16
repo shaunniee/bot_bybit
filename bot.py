@@ -96,10 +96,10 @@ while True:
                 buy_price = current_price
                 qty = trade_usdt / current_price
                 place_order("Buy", round(qty, 2))
-                send_telegram(f"🟢 Bought XRP at {buy_price:.4f} | Qty: {round(qty, 2)}")
+                
 
         time.sleep(30)
 
     except Exception as e:
         send_telegram(f"❌ Error: {e}")
-        time.sleep(60)
+        time.sleep(600)

@@ -67,7 +67,8 @@ async def trading_loop():
                     in_cooldown = False
                     await send_telegram("Cooldown period ended. Bot is resuming trades.")
                 else:
-                    await asyncio.sleep(30)
+                    print(f"{now} | In cooldown. Waiting...")
+                    await asyncio.sleep(600)
                     continue
 
             current_price = get_price()
@@ -98,20 +99,20 @@ async def trading_loop():
             else:
                 usdt = get_wallet_balance()
                 print("buy loop 1")
-                if change_24h <= -1 and not get_position() and usdt >= 10:
+                if change_24h <= -1 and not get_position()  and usdt >= 10:
                     print("buy loop 2")
                     trade_usdt = usdt * TRADE_PERCENTAGE
                     buy_price = current_price
                     qty = trade_usdt / current_price
                     print(place_order("Buy", round(qty, 2)))
                     await send_telegram(f"🛒 Placed Buy Order for XRP at {current_price:.4f}")
-                    await asyncio.sleep(30)
                 elif usdt < 10:
                     print(f"{now} | Skipping buy: USDT balance too low (${usdt:.2f})")
 
         except Exception as e:
             print(f"Error: {e}")
-            await asyncio.sleep(60)
+
+        await asyncio.sleep(600)  # Wait 10 minutes before next iteration
 
 # Run the trading loop
 asyncio.run(trading_loop())

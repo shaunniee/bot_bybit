@@ -102,5 +102,6 @@ while True:
         time.sleep(30)
 
     except Exception as e:
+        print(e)
         send_telegram(f"❌ Error: {e}")
         time.sleep(600)

@@ -97,7 +97,9 @@ async def trading_loop():
 
             else:
                 usdt = get_wallet_balance()
+                print("buy loop 1")
                 if change_24h <= -1 and not get_position() and not has_xrp() and usdt >= 10:
+                    print("buy loop 2")
                     trade_usdt = usdt * TRADE_PERCENTAGE
                     buy_price = current_price
                     qty = trade_usdt / current_price

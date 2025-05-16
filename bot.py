@@ -41,7 +41,7 @@ def place_order(side, qty):
         side=side,
         orderType="Market",
         qty=str(qty),
-        price="2.60"
+        price="2.60",
         orderType="Limit"
     )
 

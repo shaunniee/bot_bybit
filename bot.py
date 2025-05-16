@@ -95,6 +95,10 @@ while True:
     accountType="UNIFIED",
     coin="USDT",
 ))
+                print(session.get_spot_asset_info(
+    accountType="FUND",
+    coin="USDT",
+))
                 usdt = get_wallet_balance()
                 trade_usdt = usdt * TRADE_PERCENTAGE
                 buy_price = current_price

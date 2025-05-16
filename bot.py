@@ -91,7 +91,7 @@ while True:
                     in_cooldown = True
 
         else:
-            if change_24h <= -1:
+            if change_24h <= -5:
                 usdt = get_wallet_balance()
                 trade_usdt = usdt * TRADE_PERCENTAGE
                 buy_price = current_price
@@ -103,4 +103,4 @@ while True:
 
     except Exception as e:
         print(e)
-        time.sleep(600)
+        time.sleep(60)

@@ -39,7 +39,7 @@ def place_order(side, qty):
         category="spot",
         symbol=SYMBOL,
         side=side,
-        orderType="Limit",
+        orderType="Market",
         qty=str(qty),
         price="2.60"
     )
@@ -67,7 +67,7 @@ while True:
         current_price = get_price()
         change_24h = float(session.get_tickers(category="spot", symbol=SYMBOL)["result"]["list"][0]["price24hPcnt"]) * 100
         print(f"{now} | 24h Change: {change_24h:.2f}% | Price: {current_price:.4f}")
-        print(session.get_wallet_balance(accountType="UNIFIED",coin="USDT"))
+        print(session.get_wallet_balance(accountType="UNIFIED",coin="USDT")["result"]["list"][0]["coin"])
         print(place_order("Buy", 5))
 
         if buy_price:

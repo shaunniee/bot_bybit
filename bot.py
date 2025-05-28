@@ -1,47 +1,54 @@
 import pandas as pd
+import numpy as np
 import requests
-import time
-import ta  # pip install ta
+from itertools import product
+import ta
+from datetime import datetime, timedelta
 
-# --- Config ---
-SYMBOL = 'XRPUSDT'
-INTERVAL = '15m'
-START_USDT = 10000
-BUY_WEIGHTS = (0, 0, 1, 0, 2, 2)
-SELL_WEIGHTS = (2, 0, 0, 1, 0, 1)
+# --- Fetch Binance mainnet historical klines for last 6 months ---
+def get_binance_klines(symbol, interval, start_str, end_str=None, limit=1000):
+    base_url = 'https://api.binance.com/api/v3/klines'
+    df_list = []
+    start_ts = int(pd.to_datetime(start_str).timestamp() * 1000)
+    end_ts = int(pd.to_datetime(end_str).timestamp() * 1000) if end_str else None
 
-# --- Fetch historical data from Binance Mainnet ---
-def get_binance_klines(symbol, interval, start_ts, end_ts):
-    url = 'https://api.binance.com/api/v3/klines'
-    all_data = []
-    while start_ts < end_ts:
+    while True:
         params = {
             'symbol': symbol,
             'interval': interval,
+            'limit': limit,
             'startTime': start_ts,
-            'endTime': end_ts,
-            'limit': 1000
         }
-        response = requests.get(url, params=params)
+        if end_ts:
+            params['endTime'] = end_ts
+        response = requests.get(base_url, params=params)
         data = response.json()
         if not data:
             break
-        all_data += data
-        start_ts = data[-1][0] + 1
-        time.sleep(0.5)  # to respect rate limits
-    df = pd.DataFrame(all_data, columns=[
-        'open_time', 'open', 'high', 'low', 'close', 'volume',
-        'close_time', 'quote_asset_volume', 'number_of_trades',
-        'taker_buy_base_asset_volume', 'taker_buy_quote_asset_volume', 'ignore'
-    ])
-    df['open_time'] = pd.to_datetime(df['open_time'], unit='ms')
-    df.set_index('open_time', inplace=True)
-    df = df.astype({
-        'open': 'float', 'high': 'float', 'low': 'float', 'close': 'float', 'volume': 'float'
-    })
-    return df[['open', 'high', 'low', 'close', 'volume']]
 
-# --- Add indicators ---
+        df = pd.DataFrame(data, columns=[
+            'open_time', 'open', 'high', 'low', 'close', 'volume',
+            'close_time', 'quote_asset_volume', 'number_of_trades',
+            'taker_buy_base_asset_volume', 'taker_buy_quote_asset_volume', 'ignore'
+        ])
+        df['open_time'] = pd.to_datetime(df['open_time'], unit='ms')
+        df.set_index('open_time', inplace=True)
+        df = df.astype({
+            'open': 'float', 'high': 'float', 'low': 'float', 'close': 'float', 'volume': 'float'
+        })
+        df_list.append(df[['open', 'high', 'low', 'close', 'volume']])
+
+        # Increment start timestamp for next batch (last open_time + interval)
+        last_open = df.index[-1]
+        start_ts = int((last_open + pd.Timedelta(minutes=15)).timestamp() * 1000)
+
+        if len(data) < limit or (end_ts and start_ts > end_ts):
+            break
+
+    full_df = pd.concat(df_list)
+    return full_df[~full_df.index.duplicated(keep='first')]  # Remove duplicates if any
+
+# --- Add technical indicators ---
 def add_indicators(df):
     df['rsi'] = ta.momentum.RSIIndicator(df['close'], window=14).rsi()
     macd = ta.trend.MACD(df['close'])
@@ -59,7 +66,7 @@ def add_indicators(df):
     df.dropna(inplace=True)
     return df
 
-# --- Signal logic ---
+# --- Buy signal with weights ---
 def buy_signal(row, weights):
     score = 0
     score += weights[0] * (row['rsi'] < 30)
@@ -70,6 +77,7 @@ def buy_signal(row, weights):
     score += weights[5] * (row['stoch_k'] < 20 and row['stoch_k'] > row['stoch_d'])
     return score >= 3
 
+# --- Sell signal with weights ---
 def sell_signal(row, weights):
     score = 0
     score += weights[0] * (row['rsi'] > 70)
@@ -80,33 +88,74 @@ def sell_signal(row, weights):
     score += weights[5] * (row['stoch_k'] > 80 and row['stoch_k'] < row['stoch_d'])
     return score >= 3
 
-# --- Backtesting logic ---
-def backtest_strategy(df, buy_weights, sell_weights):
-    usdt = START_USDT
-    position = 0
+# --- Backtest with reinvestment and initial capital ---
+def backtest_strategy(df, buy_weights, sell_weights, initial_capital=10000):
+    capital = initial_capital
+    position = 0  # units of XRP
+    trades = 0
+
     for i in range(1, len(df)):
         row = df.iloc[i]
         if position == 0 and buy_signal(row, buy_weights):
-            position = usdt / row['close']
-            entry_price = row['close']
+            position = capital / row['close']
+            trades += 1
         elif position > 0 and sell_signal(row, sell_weights):
-            usdt = position * row['close']
+            capital = position * row['close']
             position = 0
-    if position > 0:
-        usdt = position * df.iloc[-1]['close']
-    return usdt - START_USDT
+            trades += 1
 
-# --- Main ---
+    # Close position if still holding at the end
+    if position > 0:
+        capital = position * df.iloc[-1]['close']
+
+    profit = capital - initial_capital
+    return profit, trades
+
+# --- Loop through all weight combinations ---
+def optimize_weights(df):
+    best_profit = float('-inf')
+    best_buy_weights = None
+    best_sell_weights = None
+    weight_range = [0, 1, 2]
+
+    total_combinations = len(weight_range)**6 * len(weight_range)**6
+    print(f"Total combinations to test: {total_combinations}")
+
+    count = 0
+    results = []
+
+    for buy_weights in product(weight_range, repeat=6):
+        for sell_weights in product(weight_range, repeat=6):
+            profit, trades = backtest_strategy(df, buy_weights, sell_weights)
+            count += 1
+            results.append((profit, trades, buy_weights, sell_weights))
+            if profit > best_profit:
+                best_profit = profit
+                best_buy_weights = buy_weights
+                best_sell_weights = sell_weights
+                print(f"New Best -> Profit: {profit:.2f}, Trades: {trades}, Buy weights: {buy_weights}, Sell weights: {sell_weights}")
+            if count % 1000 == 0:
+                print(f"Tested {count}/{total_combinations} combinations...")
+
+    print(f"\nBest Buy weights: {best_buy_weights}, Best Sell weights: {best_sell_weights}, Max Profit: {best_profit:.2f}")
+    return best_buy_weights, best_sell_weights, results
+
 def main():
-    print("Fetching 6 months of historical data...")
-    end_ts = int(time.time() * 1000)
-    start_ts = end_ts - 6 * 30 * 24 * 60 * 60 * 1000
-    df = get_binance_klines(SYMBOL, INTERVAL, start_ts, end_ts)
+    print("Fetching 6 months of historical data for XRPUSDT at 15m interval...")
+    end_date = datetime.utcnow()
+    start_date = end_date - timedelta(days=180)  # ~6 months
+    df = get_binance_klines('XRPUSDT', '15m', start_str=start_date.strftime('%Y-%m-%d %H:%M:%S'), end_str=end_date.strftime('%Y-%m-%d %H:%M:%S'))
+    print(f"Data fetched: {len(df)} rows")
+
     print("Calculating indicators...")
     df = add_indicators(df)
-    print("Running backtest with best weights...")
-    profit = backtest_strategy(df, BUY_WEIGHTS, SELL_WEIGHTS)
-    print(f"Final profit over 6 months: ${profit:.2f} on ${START_USDT} initial investment")
 
-if __name__ == '__main__':
+    print("Starting optimization over all weight combinations (this will take time)...")
+    best_buy_weights, best_sell_weights, results = optimize_weights(df)
+
+    print("Backtesting best weights on full data...")
+    final_profit, final_trades = backtest_strategy(df, best_buy_weights, best_sell_weights)
+    print(f"Final profit with best weights: ${final_profit:.2f} after {final_trades} trades.")
+
+if __name__ == "__main__":
     main()

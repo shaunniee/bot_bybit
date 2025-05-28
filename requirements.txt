@@ -1,3 +1,5 @@
 pybit
 requests
 python-telegram-bot
+ta
+pandas

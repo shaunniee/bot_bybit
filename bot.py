@@ -1,136 +1,112 @@
+import pandas as pd
+import requests
 import time
-import os
-from pybit.unified_trading import HTTP
-from telegram import Bot
-from datetime import datetime
-import asyncio
+import ta  # pip install ta
 
-# === CONFIGURATION ===
-API_KEY = os.getenv("API_KEY")
-API_SECRET = os.getenv("API_SECRET")
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+# --- Config ---
+SYMBOL = 'XRPUSDT'
+INTERVAL = '15m'
+START_USDT = 10000
+BUY_WEIGHTS = (0, 0, 1, 0, 2, 2)
+SELL_WEIGHTS = (2, 0, 0, 1, 0, 1)
 
-SYMBOL = "XRPUSDT"
-COOLDOWN_SECONDS = 86400  # 24 hours
-TRADE_PERCENTAGE = 0.98
-PROFIT_TARGET = 0.03
-STOP_LOSS_PERCENTAGE = 0.03
-BUY_TOLERANCE_PERCENTAGE = 0.01  # 1% below market
+# --- Fetch historical data from Binance Mainnet ---
+def get_binance_klines(symbol, interval, start_ts, end_ts):
+    url = 'https://api.binance.com/api/v3/klines'
+    all_data = []
+    while start_ts < end_ts:
+        params = {
+            'symbol': symbol,
+            'interval': interval,
+            'startTime': start_ts,
+            'endTime': end_ts,
+            'limit': 1000
+        }
+        response = requests.get(url, params=params)
+        data = response.json()
+        if not data:
+            break
+        all_data += data
+        start_ts = data[-1][0] + 1
+        time.sleep(0.5)  # to respect rate limits
+    df = pd.DataFrame(all_data, columns=[
+        'open_time', 'open', 'high', 'low', 'close', 'volume',
+        'close_time', 'quote_asset_volume', 'number_of_trades',
+        'taker_buy_base_asset_volume', 'taker_buy_quote_asset_volume', 'ignore'
+    ])
+    df['open_time'] = pd.to_datetime(df['open_time'], unit='ms')
+    df.set_index('open_time', inplace=True)
+    df = df.astype({
+        'open': 'float', 'high': 'float', 'low': 'float', 'close': 'float', 'volume': 'float'
+    })
+    return df[['open', 'high', 'low', 'close', 'volume']]
 
-# === INIT ===
-session = HTTP(testnet=True, api_key=API_KEY, api_secret=API_SECRET)
-bot = Bot(token=TELEGRAM_TOKEN)
-in_cooldown = False
-cooldown_start = None
+# --- Add indicators ---
+def add_indicators(df):
+    df['rsi'] = ta.momentum.RSIIndicator(df['close'], window=14).rsi()
+    macd = ta.trend.MACD(df['close'])
+    df['macd'] = macd.macd()
+    df['macd_signal'] = macd.macd_signal()
+    df['ema9'] = ta.trend.EMAIndicator(df['close'], window=9).ema_indicator()
+    df['ema21'] = ta.trend.EMAIndicator(df['close'], window=21).ema_indicator()
+    df['vwap'] = (df['volume'] * (df['high'] + df['low'] + df['close'])/3).cumsum() / df['volume'].cumsum()
+    bb = ta.volatility.BollingerBands(df['close'], window=20, window_dev=2)
+    df['bb_upper'] = bb.bollinger_hband()
+    df['bb_lower'] = bb.bollinger_lband()
+    stoch = ta.momentum.StochasticOscillator(df['high'], df['low'], df['close'], window=14, smooth_window=3)
+    df['stoch_k'] = stoch.stoch()
+    df['stoch_d'] = stoch.stoch_signal()
+    df.dropna(inplace=True)
+    return df
 
-async def send_telegram(msg):
-    await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=msg)
+# --- Signal logic ---
+def buy_signal(row, weights):
+    score = 0
+    score += weights[0] * (row['rsi'] < 30)
+    score += weights[1] * (row['macd'] > row['macd_signal'])
+    score += weights[2] * (row['ema9'] > row['ema21'])
+    score += weights[3] * (row['close'] > row['vwap'])
+    score += weights[4] * (row['close'] < row['bb_lower'])
+    score += weights[5] * (row['stoch_k'] < 20 and row['stoch_k'] > row['stoch_d'])
+    return score >= 3
 
-def get_wallet_balance():
-    balances = session.get_wallet_balance(accountType="UNIFIED", coin="USDT")["result"]["list"][0]["coin"][0]["walletBalance"]
-    return float(balances)
+def sell_signal(row, weights):
+    score = 0
+    score += weights[0] * (row['rsi'] > 70)
+    score += weights[1] * (row['macd'] < row['macd_signal'])
+    score += weights[2] * (row['ema9'] < row['ema21'])
+    score += weights[3] * (row['close'] < row['vwap'])
+    score += weights[4] * (row['close'] > row['bb_upper'])
+    score += weights[5] * (row['stoch_k'] > 80 and row['stoch_k'] < row['stoch_d'])
+    return score >= 3
 
-def get_price():
-    data = session.get_tickers(category="spot", symbol=SYMBOL)
-    return float(data["result"]["list"][0]["lastPrice"])
+# --- Backtesting logic ---
+def backtest_strategy(df, buy_weights, sell_weights):
+    usdt = START_USDT
+    position = 0
+    for i in range(1, len(df)):
+        row = df.iloc[i]
+        if position == 0 and buy_signal(row, buy_weights):
+            position = usdt / row['close']
+            entry_price = row['close']
+        elif position > 0 and sell_signal(row, sell_weights):
+            usdt = position * row['close']
+            position = 0
+    if position > 0:
+        usdt = position * df.iloc[-1]['close']
+    return usdt - START_USDT
 
-def place_conditional_buy(qty, trigger_price):
-    response = session.place_order(
-        category="spot",
-        symbol=SYMBOL,
-        side="Buy",
-        orderType="Market",
-        qty=str(qty),
-        triggerPrice=str(trigger_price),
-        triggerDirection=1,  # Trigger when price drops below
-        timeInForce="GoodTillCancel"
-    )
-    return response["result"]["orderId"]
+# --- Main ---
+def main():
+    print("Fetching 6 months of historical data...")
+    end_ts = int(time.time() * 1000)
+    start_ts = end_ts - 6 * 30 * 24 * 60 * 60 * 1000
+    df = get_binance_klines(SYMBOL, INTERVAL, start_ts, end_ts)
+    print("Calculating indicators...")
+    df = add_indicators(df)
+    print("Running backtest with best weights...")
+    profit = backtest_strategy(df, BUY_WEIGHTS, SELL_WEIGHTS)
+    print(f"Final profit over 6 months: ${profit:.2f} on ${START_USDT} initial investment")
 
-def check_order_filled(order_id):
-    order_info = session.get_order(category="spot", symbol=SYMBOL, orderId=order_id)
-    return order_info["result"]["orderStatus"] == "Filled"
-
-def place_take_profit_and_stop_loss(qty, buy_price):
-    take_profit_price = round(buy_price * (1 + PROFIT_TARGET), 4)
-    stop_loss_price = round(buy_price * (1 - STOP_LOSS_PERCENTAGE), 4)
-
-    # Take Profit
-    session.place_order(
-        category="spot",
-        symbol=SYMBOL,
-        side="Sell",
-        orderType="Limit",
-        qty=str(qty),
-        price=str(take_profit_price)
-    )
-
-    # Stop Loss
-    session.place_order(
-        category="spot",
-        symbol=SYMBOL,
-        side="Sell",
-        orderType="Market",
-        qty=str(qty),
-        stopLoss=str(stop_loss_price)
-    )
-
-    return take_profit_price, stop_loss_price
-
-# === TRADING LOOP ===
-async def trading_loop():
-    global in_cooldown, cooldown_start
-
-    while True:
-        try:
-            now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-            if in_cooldown:
-                if time.time() - cooldown_start >= COOLDOWN_SECONDS:
-                    in_cooldown = False
-                    await send_telegram("Cooldown period ended. Bot is resuming trades.")
-                else:
-                    print(f"{now} | In cooldown. Waiting...")
-                    await asyncio.sleep(600)
-                    continue
-
-            current_price = get_price()
-            change_24h = float(session.get_tickers(category="spot", symbol=SYMBOL)["result"]["list"][0]["price24hPcnt"])
-            print(f"{now} | 24h Change: {change_24h:.2f}% | Price: {current_price}")
-
-            usdt = get_wallet_balance()
-            if change_24h <= -5 and usdt >= 10:
-                trade_usdt = usdt * TRADE_PERCENTAGE
-                trigger_price = current_price * (1 - BUY_TOLERANCE_PERCENTAGE)
-                qty = round(trade_usdt / trigger_price, 2)
-
-                order_id = place_conditional_buy(qty, round(trigger_price, 4))
-                await send_telegram(f"🛒 Placed Conditional Market Buy Order for XRP\nTrigger: {trigger_price:.4f}")
-
-                # Wait for the order to fill
-                print("⏳ Waiting for buy order to fill...")
-                for _ in range(60):  # Check for up to 10 minutes
-                    if check_order_filled(order_id):
-                        take_profit, stop_loss = place_take_profit_and_stop_loss(qty, trigger_price)
-                        await send_telegram(
-                            f"✅ Buy filled at {trigger_price:.4f}\n"
-                            f"📈 Take Profit set at {take_profit:.4f}\n"
-                            f"🔻 Stop Loss set at {stop_loss:.4f}"
-                        )
-                        break
-                    await asyncio.sleep(10)
-                else:
-                    await send_telegram("⚠️ Buy order not filled within 10 minutes.")
-
-            elif usdt < 10:
-                print(f"{now} | Skipping buy: USDT balance too low (${usdt:.2f})")
-
-        except Exception as e:
-            print(f"Error: {e}")
-            await send_telegram(f"⚠️ Error in trading loop: {e}")
-
-        await asyncio.sleep(600)  # Wait 10 minutes before next iteration
-
-# Run the trading loop
-asyncio.run(trading_loop())
+if __name__ == '__main__':
+    main()
